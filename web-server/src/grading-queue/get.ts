@@ -74,7 +74,7 @@ const getGradingJobs = async (): Promise<GradingJob[]> => {
         submission_id = key_split[1];
       } else {
         const submitter: string = key_split.join(DELIM);
-        submission_id = submitter_info[submitter].pop()!;
+        submission_id = submitter_info[submitter].shift()!;
       }
 
       const grading_job = await getGradingJobFromSubmissionId(submission_id);
