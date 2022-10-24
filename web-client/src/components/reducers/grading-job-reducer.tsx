@@ -2,8 +2,8 @@ import { AnyAction } from "redux";
 import {
   GET_GRADING_JOB_QUEUE,
   DELETE_GRADING_JOB,
-  MOVE_GRADING_JOB_BACK,
-  MOVE_GRADING_JOB_FRONT,
+  DELAY_GRADING_JOB,
+  RELEASE_GRADING_JOB,
 } from "../../actions/grading-job-actions";
 import { State, GradingJob } from "../grading_job_table/types";
 
@@ -12,10 +12,16 @@ const initial_state: State = {
     grading_jobs: [],
     prev: null,
     next: null,
+    first: null,
+    last: null,
     total: 0,
     stats: {
       all: { avg: 0, min: 0, max: 0, num: 0 },
       released: { avg: 0, min: 0, max: 0, num: 0 },
+    },
+    filter_info: {
+      course_id: [],
+      grader_id: [],
     },
   },
 };
@@ -30,8 +36,7 @@ const gradingJobReducer = (state: State = initial_state, action: AnyAction) => {
     case DELETE_GRADING_JOB:
       const updated_queue_deleted = [
         ...state.grading_queue.grading_jobs.filter(
-          (grading_job: GradingJob) =>
-            grading_job.submission_id !== action.grading_job_submission_id
+          (grading_job: GradingJob) => grading_job.nonce !== action.nonce
         ),
       ];
       return (state = {
@@ -41,61 +46,60 @@ const gradingJobReducer = (state: State = initial_state, action: AnyAction) => {
         },
       });
     // TODO: Abstract from moving back/front
-    case MOVE_GRADING_JOB_BACK:
-      const job_to_move_back = state.grading_queue.grading_jobs.find(
-        (job) => job.submission_id === action.grading_job_submission_id
+    case DELAY_GRADING_JOB:
+      const job_to_delay = state.grading_queue.grading_jobs.find(
+        (job) => job.nonce === action.nonce
       );
-      if (!job_to_move_back) return state;
+      if (!job_to_delay) return state;
 
-      // Update priority of job in state
-      const updated_job_back = {
-        ...job_to_move_back,
-        priority: action.new_priority,
+      // Update release_at of job in state
+      const delayed_job: GradingJob = {
+        ...job_to_delay,
+        release_at: action.new_release_at,
       };
-      const updated_queue_back = [
+      const queue_with_delayed_job = [
         ...state.grading_queue.grading_jobs.filter(
-          (job) => job.submission_id !== action.grading_job_submission_id
+          (job) => job.nonce !== action.nonce
         ),
-        updated_job_back,
+        delayed_job,
       ];
       return (state = {
         grading_queue: {
           ...state.grading_queue,
-          grading_jobs: updated_queue_back,
+          grading_jobs: queue_with_delayed_job,
         },
       });
-    case MOVE_GRADING_JOB_FRONT:
-      const job_to_move_front = state.grading_queue.grading_jobs.find(
-        (job) => job.submission_id === action.grading_job_submission_id
+    case RELEASE_GRADING_JOB:
+      const job_to_release = state.grading_queue.grading_jobs.find(
+        (job) => job.nonce === action.nonce
       );
-      if (!job_to_move_front) return state;
-      // Update priority of job in state
-      const updated_job = {
-        ...job_to_move_front,
-        priority: action.new_priority,
+      if (!job_to_release) return state;
+      // Update release_at of job in state
+      const release_job: GradingJob = {
+        ...job_to_release,
+        release_at: action.new_release_at,
       };
 
       const now: number = new Date().getTime();
       let released_ind = 0;
       for (let i = 0; i < state.grading_queue.grading_jobs.length; i++) {
         const grading_job = state.grading_queue.grading_jobs[i];
-        const release_time_ms: number = grading_job.priority * 1000;
-        const is_released: boolean = release_time_ms < now;
+        const is_released: boolean = grading_job.release_at < now;
         if (!is_released) {
           released_ind = i;
           break;
         }
       }
-      const updated_queue_front = [
+      const queue_with_release_job = [
         ...state.grading_queue.grading_jobs.filter(
-          (job) => job.submission_id !== action.grading_job_submission_id
+          (job) => job.nonce !== action.nonce
         ),
       ];
-      updated_queue_front.splice(released_ind, 0, updated_job);
+      queue_with_release_job.splice(released_ind, 0, release_job);
       return (state = {
         grading_queue: {
           ...state.grading_queue,
-          grading_jobs: updated_queue_front,
+          grading_jobs: queue_with_release_job,
         },
       });
     default:

@@ -1,24 +1,66 @@
 import { client } from "../index";
-import { GradingJob, SubmitterInfo, SubmitterInfoObj } from "./types";
+import { GradingJob, SubmitterInfo, SubmitterInfoData } from "./types";
+import { filterNull } from "../utils/helpers";
+import { redisZScore } from "../utils/redis";
 
 const DELIM = ".";
 
 const getGradingJobFromSubmissionId = async (
-  submission_id: string
-): Promise<string> => {
-  const grading_job = await client.get(`QueuedGradingInfo.${submission_id}`);
-  // Returns empty string if grading job was not found
-  return grading_job === null ? "" : grading_job;
+  submission_id: string,
+): Promise<[GradingJob | null, Error | null]> => {
+  try {
+    const grading_job_str = await client.get(
+      `QueuedGradingInfo.${submission_id}`,
+    );
+    if (!grading_job_str)
+      return [
+        null,
+        Error("Grading job not found while getting job from submission id."),
+      ];
+    const grading_job: GradingJob = JSON.parse(grading_job_str);
+    // Grading job can be null here
+    return [grading_job, null];
+  } catch (error) {
+    return [null, error];
+  }
 };
 
-const getGradingQueue = async (): Promise<string[]> => {
-  return await client.zRange("GradingQueue", 0, -1);
+const getGradingQueue = async (): Promise<[string[] | null, Error | null]> => {
+  try {
+    const grading_queue = await client.zRange("GradingQueue", 0, -1);
+    // zRange will return [] if there are no jobs
+    return [grading_queue, null];
+  } catch (error) {
+    if (error instanceof Error) {
+      return [null, error];
+    }
+    return [
+      null,
+      Error("Something went wrong when trying to retrieve grading queue."),
+    ];
+  }
 };
 
 const getSubmitterSubmissions = async (
-  submitter: string
-): Promise<string[]> => {
-  return await client.lRange(`SubmitterInfo.${submitter}`, 0, -1);
+  submitter: string,
+): Promise<[string[] | null, Error | null]> => {
+  try {
+    const submissions: string[] = await client.lRange(
+      `SubmitterInfo.${submitter}`,
+      0,
+      -1,
+    );
+    // lRange returns [] if key not found
+    return [submissions, null];
+  } catch (error) {
+    if (error instanceof Error) {
+      return [null, error];
+    }
+    return [
+      null,
+      Error("Something went wrong when trying to retrieve submissions list."),
+    ];
+  }
 };
 
 const getUniqueSubmitters = (grading_queue: string[]): string[] => {
@@ -35,39 +77,83 @@ const getUniqueSubmitters = (grading_queue: string[]): string[] => {
   return unique_submitters;
 };
 
+// TODO: Simplify/Rewrite
 const getSubmitterInfo = async (
-  submitters: string[]
-): Promise<SubmitterInfo> => {
+  submitters: string[],
+): Promise<[SubmitterInfo | null, Error | null]> => {
   // Get the submission list for each submitter
-  const submitter_info_list: Promise<SubmitterInfoObj>[] = submitters.map(
-    async (submitter: string) => {
-      const submissions: string[] = await getSubmitterSubmissions(submitter);
-      return { submitter: submitter, submissions: submissions };
-    }
-  );
+  const submitter_info_list: Promise<SubmitterInfoData | null>[] =
+    submitters.map(async (submitter: string) => {
+      const [submissions, submissions_error] = await getSubmitterSubmissions(
+        submitter,
+      );
+      if (submissions_error || !submissions || !submissions.length) {
+        return null;
+      }
+      const submitter_info_data: SubmitterInfoData = {
+        submitter: submitter,
+        submissions: submissions,
+      };
+      return submitter_info_data;
+    });
 
-  // Format to SubmitterInfo type
-  const submitter_info_list_res: SubmitterInfoObj[] = await Promise.all(
-    submitter_info_list
-  );
-  let submitter_info: SubmitterInfo = {};
-  submitter_info_list_res.map((entry: SubmitterInfoObj) => {
-    submitter_info[entry.submitter] = entry.submissions;
-    return;
-  });
-  return submitter_info;
+  try {
+    const submitter_info_list_res = await Promise.all(submitter_info_list);
+    // Format to SubmitterInfo type
+    let submitter_info: SubmitterInfo = {};
+    submitter_info_list_res.map((entry: SubmitterInfoData | null) => {
+      if (entry) submitter_info[entry.submitter] = entry.submissions;
+      return;
+    });
+    return [submitter_info, null];
+  } catch (error) {
+    if (error instanceof Error) {
+      return [null, error];
+    }
+    return [
+      null,
+      Error("Something went wrong while retrieving submitter info."),
+    ];
+  }
 };
 
-const getGradingJobs = async (): Promise<GradingJob[]> => {
-  const grading_queue: string[] = await getGradingQueue();
+// Simplify/Rewrite
+const getGradingJobs = async (): Promise<
+  [GradingJob[] | null, Error | null]
+> => {
+  const [grading_queue, grading_queue_error] = await getGradingQueue();
+  if (grading_queue_error) {
+    return [null, grading_queue_error];
+  }
+  if (!grading_queue) {
+    return [null, Error("Grading queue could not be retrieved.")];
+  }
+  if (grading_queue.length === 0) return [[], null];
+
   const submitters: string[] = getUniqueSubmitters(grading_queue);
-  const submitter_info: SubmitterInfo = await getSubmitterInfo(submitters);
+
+  const [submitter_info, submitter_info_error] = await getSubmitterInfo(
+    submitters,
+  );
+  if (submitter_info_error) {
+    return [null, submitter_info_error];
+  }
+  if (!submitter_info) {
+    return [null, Error("Submitter info could not be retrieved.")];
+  }
 
   // Grading queue is in order of increasing release timestamp
-  const grading_jobs: Promise<GradingJob>[] = grading_queue.map(
+  // TODO: second time mapping over grading quueue - REWRITE/SIMPLIFY
+  // TODO: try catch this?
+  const grading_jobs: Promise<GradingJob | null>[] = grading_queue.map(
     async (key: string) => {
+      // Ex: team.234.nonce where 234 is the team is
+      // Ex: sub.5.nonce where 5 is the submission id
       const key_split: string[] = key.split(DELIM);
+
+      // Retrieve timestamp from key
       const nonce: string = key_split.pop()!;
+      if (!nonce) return null;
 
       let submission_id: string;
       if (key_split[0] === "sub") {
@@ -77,21 +163,36 @@ const getGradingJobs = async (): Promise<GradingJob[]> => {
         submission_id = submitter_info[submitter].shift()!;
       }
 
-      const grading_job = await getGradingJobFromSubmissionId(submission_id);
-      if (!grading_job) {
-        // TODO: Error
+      const [grading_job, grading_job_error] =
+        await getGradingJobFromSubmissionId(submission_id);
+      // TODO: How to handle error/job not found getting a single job? Carry on with the rest?
+      if (grading_job_error || !grading_job) {
+        return null;
       }
-      const json_grading_job: GradingJob = {
+      // Store the score (priority) from GradingQueue since priority in
+      // QueuedGradingInfo can be overwritten by duplicate submission_id
+      const [gq_release_at, zscore_err] = await redisZScore(
+        "GradingQueue",
+        key,
+      );
+      if (zscore_err || !gq_release_at) return null;
+
+      return {
+        ...grading_job,
+        release_at: gq_release_at,
         nonce: nonce,
-        ...JSON.parse(grading_job),
       };
-      return json_grading_job;
-    }
+    },
   );
 
-  const results: GradingJob[] = await Promise.all(grading_jobs);
-  results.sort((a, b) => (a.priority > b.priority ? 1 : -1));
-  return results;
+  try {
+    const results: (GradingJob | null)[] = await Promise.all(grading_jobs);
+    const filtered_results: GradingJob[] = filterNull(results);
+    filtered_results.sort((a, b) => (a!.release_at > b!.release_at ? 1 : -1));
+    return [filtered_results, null];
+  } catch (error) {
+    return [null, error];
+  }
 };
 
 export default getGradingJobs;

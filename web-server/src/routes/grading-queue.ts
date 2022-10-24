@@ -1,17 +1,22 @@
 import Router from "express";
 import {
   getGradingQueue,
-  addGradingJobToQueue,
-  moveGradingJobInQueue,
-  deleteGradingJobInQueue,
+  createOrUpdateJobController,
+  moveJobController,
+  deleteJobController,
+  createImmediateGradingJobController,
 } from "../controllers/grading-queue-controller";
 
 const gradingQueueRouter = Router();
 
-// TODO: Write handlers/validation and add them to the route handlers
+// TODO: Add middleware/move existing validation to middleware
 gradingQueueRouter.get("/grading_queue", getGradingQueue);
-gradingQueueRouter.post("/grading_queue", addGradingJobToQueue);
-gradingQueueRouter.put("/grading_queue/:sub_id", moveGradingJobInQueue);
-gradingQueueRouter.delete("/grading_queue/:sub_id", deleteGradingJobInQueue);
+gradingQueueRouter.post("/grading_queue", createOrUpdateJobController);
+gradingQueueRouter.post(
+  "/grading_queue/immediate",
+  createImmediateGradingJobController,
+);
+gradingQueueRouter.put("/grading_queue/move/:sub_id", moveJobController);
+gradingQueueRouter.delete("/grading_queue/:sub_id", deleteJobController);
 
 export default gradingQueueRouter;

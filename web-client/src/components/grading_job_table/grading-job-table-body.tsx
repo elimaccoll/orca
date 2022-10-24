@@ -39,7 +39,9 @@ const GradingJobTableBody = ({
       );
       break;
     case "release_time":
-      grading_jobs.sort((a, b) => (a.priority > b.priority ? -order : order));
+      grading_jobs.sort((a, b) =>
+        a.release_at > b.release_at ? -order : order
+      );
       break;
     default:
       break;
@@ -53,7 +55,7 @@ const GradingJobTableBody = ({
           return (
             <GradingJobTableItem
               grading_job={grading_job}
-              key={grading_job.submission_id}
+              key={grading_job.nonce}
             />
           );
         })}

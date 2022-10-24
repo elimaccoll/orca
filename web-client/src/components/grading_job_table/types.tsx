@@ -1,11 +1,10 @@
-type GradingScriptCommand = {
+export type GradingScriptCommand = {
   cmd: string;
   on_fail: string;
   on_complete: string;
 };
 
 export interface GradingJob {
-  created_at: number;
   submission_id: number;
   grade_id: number;
   grader_id: number;
@@ -13,14 +12,15 @@ export interface GradingJob {
   starter_code?: string; // CodeFileInfo;
   student_code: string; // CodeFileInfo;
   professor_code?: string; // CodeFileInfo;
-  priority: number;
   max_retries?: number;
   script: [GradingScriptCommand];
   team_id?: number;
   user_id?: number;
   user_names?: string[];
   submitter_name: string;
-  nonce: string; // Used for redis operations
+  release_at: number; // release timestamp in ms
+  created_at: number; // created at timestamp in ms
+  nonce: string;
 }
 
 export type PaginationInfo = {
@@ -40,12 +40,20 @@ export type GradingQueueStats = {
   released: TimeStats;
 };
 
+export type FilterInfo = {
+  course_id: string[];
+  grader_id: string[];
+};
+
 export type GradingQueue = {
   grading_jobs: GradingJob[];
+  first: PaginationInfo | null;
+  last: PaginationInfo | null;
   prev: PaginationInfo | null;
   next: PaginationInfo | null;
   total: number;
   stats: GradingQueueStats;
+  filter_info: FilterInfo;
 };
 
 export type State = {
