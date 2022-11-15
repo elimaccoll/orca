@@ -84,22 +84,15 @@ function jobInQueue({ key }: GradingJob) {
   return EXISTS(key);
 }
 
-function calculateJobLifeTime(
-  { priority, key }: GradingJob,
-  arrivalTime: number
-) {
-  return Math.max(priority + arrival_time + life_time_buffer, EXPIRETIME(key));
-}
-
 function enqueueJob(
   { key, collation, priority }: GradingJob,
   arrivalTime: number
 ) {
   const nextTask = `${collation.type}.${collation.id}`;
-  const nonce = priority + arrivalTime;
-  RPUSH(`SubmitterInfo.${nextTask}`, key);
-  ZADD('Reservations', `${nextTask}.${arrivalTime}`, nonce);
-  SADD(`Nonces.${collation.type}.${collation.id}`, nonce);
+  const releaseTime = priority + arrivalTime;
+  LPUSH(`SubmitterInfo.${nextTask}`, key);
+  ZADD("Reservations", `${nextTask}.${arrivalTime}`, releaseTime);
+  SADD(`Nonces.${collation.type}.${collation.id}`, arrivalTime);
 }
 ```
 
@@ -163,8 +156,8 @@ Jobs in the queue may either be:
 
 ```typescript
 enum MoveJobAction {
-  RELEASE = 'release',
-  DELAY = 'delay',
+  RELEASE = "release",
+  DELAY = "delay",
 }
 
 interface MoveJobRequest {
@@ -197,10 +190,10 @@ function moveJob(req: JobMoveRequest) {
 const MOVE_TO_BACK_BUFFER = 10; // seconds
 
 function delayJob(req: JobMoveReuquest) {
-  [last_job, last_priority] = ZRANGE('Reservations', -1, -1, WITHSCORES); // Gets job at back of queue
+  [last_job, last_priority] = ZRANGE("Reservations", -1, -1, WITHSCORES); // Gets job at back of queue
   const new_priority = last_priority + MOVE_TO_BACK_BUFFER;
   ZADD(
-    'Reservations',
+    "Reservations",
     `${req.collation.type}.${req.collation.id}.${req.nonce}`,
     new_priority
   );
@@ -234,10 +227,10 @@ function deleteJob(
 ) {
   if (collation) {
     LREM(`SubmitterInfo.${cType}.${cID}`, 1, job_key);
-    ZREM('Reservations', [cType, cID, nonce].join('.'));
+    ZREM("Reservations", [cType, cID, nonce].join("."));
     SREM(`Nonces.${cType}.${cID}`, nonce);
   } else {
-    ZREM('Reservations', `immediate.${nonce}`);
+    ZREM("Reservations", `immediate.${nonce}`);
   }
 }
 ```
@@ -249,11 +242,11 @@ All jobs have their data ejected from `Reservations`. Non-immediate jobs have da
 Grading jobs are popped from the queue using their associated `GradingJobKey`.
 
 ```typescript
-const nextTask = ZPOPMIN('Reservations');
-const nextTaskInfo = next_task.split('.');
+const nextTask = ZPOPMIN("Reservations");
+const nextTaskInfo = next_task.split(".");
 
 let jobKey, collationType, collationID, nonce;
-if (nextInfo[0] === 'immediate') {
+if (nextInfo[0] === "immediate") {
   [_, jobKey] = nextTaskInfo;
 } else {
   [collationType, collationID, nonce] = nextTaskInfo;
